@@ -1,0 +1,316 @@
+1)做一个手机浏览器可访问的 WebAR 游戏原型：玩家在室外移动探索，靠近随机生成在“现实空间节点”附近的 AR 奖励并捕获；捕获后奖励进入携带栏；早期奖励是暖色小灯球，捕获后转为“陪伴灯球”跟随玩家；玩家可随时选择继续探索或回家撤离；回到起始点并进入室内后触发撤离结算，保存携带奖励并结束本局。
+
+2) 关键约束与技术选型
+2.1 运行环境与限制
+
+平台：手机浏览器（iOS Safari / Android Chrome）
+
+WebAR 形式：优先做 location-based AR + 3D overlay 的轻量原型
+
+现实原因：纯 Web 端“平面检测/室内定位/真实路口识别”在跨设备浏览器里不稳定，尤其 iOS 限制多；所以先用 GPS + 罗盘 + 3D 叠加完成核心玩法闭环。
+
+必须可部署：Vite 构建，支持一键部署到 Vercel / Netlify（HTTPS 必须）
+
+必须移动端交互友好：大按钮、清晰引导、低功耗/低发热优先
+
+2.2 推荐技术栈（直接指定，减少 agent 分歧）
+
+前端：Vite + Three.js
+
+AR/定位：
+
+WebXR immersive-ar：若设备支持，则用 WebXR（Android 兼容好）。
+
+Fallback：iOS Safari 无 WebXR 时，使用“Camera 背景 + 传感器姿态 + GPS”的“伪 AR”方案（体验像 AR，但不依赖 WebXR）。
+
+传感器：DeviceOrientation / Generic Sensor（可用则用，不可用则降级）
+
+地图/节点：不接第三方地图 API（避免 key、成本、复杂度），节点用本地规则生成 + GPS 抖动容错
+
+3) 游戏系统拆解
+3.1 核心状态机（必须实现）
+
+IDLE：未开始（室内/未授权）
+
+OUTDOOR_SEARCH：室外探索中（生成奖励）
+
+CAPTURE_READY：目标进入捕获区域（满足距离 & 屏幕中心）
+
+CAPTURING：长按/稳定对准计时
+
+CARRYING：捕获成功，加入携带栏；灯球进入陪伴模式
+
+EVAC_READY：接近起始点且检测“进入室内”条件满足
+
+EVAC_ANIM：撤离动画/灯球聚合
+
+RESULT：结算保存并结束本局
+
+3.2 室内/室外判定（务实实现）
+
+Web 无法稳定判断“是否室内”，用组合策略：
+
+GPS 精度（accuracy）+ 速度（speed）+ 环境光（若可用）
+
+简化规则建议：
+
+室外激活条件：accuracy < 30m 且 speed 有变化或 heading 可获取
+
+进入室内触发撤离：回到起点半径内（如 20m）且 accuracy 明显变差（如 > 50m）持续 N 秒，或玩家手动点击“我已回到家”
+
+强制提供手动兜底按钮：iOS 很可能拿不到稳定 sensor。
+
+3.3 “现实空间节点”生成（路口/空地/建筑边缘）
+
+你给的“路口/空地/建筑边缘”在 Web 端很难真实识别，因此用“叙事层模拟”：
+
+节点类型在 UI/文案里显示（比如“路口节点”“建筑边缘节点”），但实际位置由规则生成：
+
+以玩家当前位置为中心，随机生成 3~6 个候选点（半径 20~80m）
+
+依据“玩家移动方向 heading”在前方扇区更高概率生成（营造“探索”）
+
+每个点标注 type（junction/open_space/edge）并附带不同视觉外观
+
+目标只有在玩家距离 < discoverRadius（如 18m）才显示“可见”
+
+3.4 灯球机制（关键体验）
+
+初期优先生成 Light Orbs：
+
+暖色（黄/橙）、体积小、易发现
+
+捕获后不消失，变成 CompanionOrb
+
+Companion 行为：
+
+保持玩家前方或周围固定距离（例如 1.2m~2.2m）
+
+平滑跟随（lerp），不指路、不催促
+
+捕获反馈：
+
+震动（Vibration API）
+
+音效（WebAudio，短促“确认”）
+
+视觉（屏幕中心 pulse + 灯球亮度增强扩散）
+
+3.5 捕获机制（屏幕中心捕获区域）
+
+屏幕中心一个 reticle（捕获圈）
+
+条件：
+
+距离达标（< captureRadius，如 6~10m）
+
+目标投影到屏幕位置进入 reticle（用相机方向+目标方位角估算）
+
+完成方式：
+
+长按 1.2~2.5 秒（奖励等级越高越久）
+
+或“稳定对准”计时（手机晃动大则进度回退）
+
+3.6 奖励分级（基础/进阶/核心）
+
+不显示“解锁条件”，但根据以下隐式指标提升等级权重：
+
+本局已走距离（GPS 累计）
+
+室外停留时长
+
+已携带数量
+
+等级影响：
+
+形态更复杂（3D 更丰富）
+
+捕获时间更长
+
+生成更稀有，discover 半径略小（更“需要走近”）
+
+3.7 决策点与撤离
+
+玩家可随时点 UI：
+
+“继续探索”
+
+“现在撤离”（引导回起点）
+
+撤离触发：
+
+回到起点半径内 + 室内条件满足（或手动“到家了”）
+
+撤离过程动画：
+
+陪伴灯球逐渐靠近
+
+接近完成时逐步变亮
+
+结束：灯球聚合熄灭、保存奖励列表、显示本局总结
+
+4) 交付物要求
+4.1 必须交付
+
+可运行项目（Vite）
+
+README.md：如何本地跑、如何部署、手机权限说明
+
+task.md：分阶段任务清单（可勾选）
+
+核心玩法完成：室外激活 → 生成目标 → 发现 → 捕获 → 携带 → 撤离结算
+
+两种模式：
+
+WebXR AR（若支持）
+
+Fallback “camera overlay mode”（必须）
+
+4.2 可选加分（但不强制）
+
+轻量教程引导（首次打开提示授权定位/传感器）
+
+性能优化：目标数量限制、帧率控制
+
+UI 氛围：暗色微观/柔光（你之前做微观世界很在意氛围，这里也要强调）
+
+5.Implementation Plan (WebAR Prototype)
+
+Goal: Build a mobile-friendly WebAR (browser-based) game prototype where the player explores outdoors, finds AR rewards near generated “real-world nodes,” captures them via a center reticle, collects them into an inventory, and can evacuate back to the starting location to end the run. Early rewards are warm “Light Orbs” that become companion orbs after capture.
+
+Tech Stack
+
+Vite + TypeScript
+
+Three.js for 3D rendering
+
+WebXR immersive-ar if available (Android)
+
+Fallback mode for iOS Safari: camera background + device orientation + GPS-based target direction overlay
+
+Web APIs: Geolocation, DeviceOrientation (if available), Vibration, WebAudio
+
+Core Modules
+
+Permissions & Environment Check
+
+Request Geolocation permission on start
+
+Request DeviceOrientation permission (iOS requires user gesture)
+
+Determine “outdoor active” state using GPS accuracy heuristics
+
+Provide manual fallback toggle: “I am outside / I am home” to avoid blocked sensors
+
+Game State Machine
+
+Implement states: IDLE → OUTDOOR_SEARCH → CAPTURE_READY → CAPTURING → CARRYING → EVAC_READY → EVAC_ANIM → RESULT
+
+Persist a single “run” session in memory; allow user to end at any time
+
+World Node & Reward Spawner
+
+Use GPS to spawn candidate nodes around player (20–80m radius, biased toward heading direction)
+
+Node types: junction / open_space / building_edge (cosmetic tags only)
+
+Rewards appear only when player within discoverRadius (e.g., 18m)
+
+Reward tiers (basic/advanced/core) chosen by hidden progression metrics:
+
+distance walked, outdoor duration, carried count
+
+Each tier affects capture duration and visual complexity
+
+AR Rendering
+
+Render dark-toned atmospheric scene with soft glow objects
+
+For WebXR: attach Three.js scene to XR session
+
+For fallback: render 3D overlay with a fake camera rig aligned by device orientation; show camera feed as background (HTML video)
+
+Capture System
+
+UI: center reticle capture zone
+
+Condition: target is close enough AND within reticle (approx using bearing vs camera heading)
+
+Action: long-press to capture; capture time depends on tier
+
+Feedback: vibration, sound ping, visual pulse, companion orb brightness pulse
+
+Companion Orb Behavior
+
+Captured light orb becomes a companion entity
+
+It follows player smoothly at a fixed offset (front/side), not guiding
+
+On any new capture, companions pulse warmly
+
+Evacuation & End-of-Run
+
+Starting location stored at run start as “home”
+
+Evac ready when player within homeRadius (e.g., 20m) + indoor heuristic OR manual “I’m home”
+
+Evac animation: companions converge and brighten, then fade out
+
+Result screen: list rewards captured this run; “Start new run”
+
+Deliverables
+
+Working Vite project with both WebXR and fallback mode
+
+README with setup + deploy instructions + permission notes
+
+task.md with checklists for each module and acceptance criteria
+
+6) 审美与氛围
+你可以再加一段“视觉气质”要求，避免 agent 做出很普通的 AR 小球：
+
+整体色调：暗色背景 + 柔光体积感（不是亮色网页）
+
+灯球材质：半透明、soft bloom、缓慢漂浮、有轻微噪声扰动
+
+UI：尽量克制，捕获圈清晰但不抢戏
+
+声音：短促、温暖、不刺激；撤离时更“收束”
+
+7) task.md 模板
+你也可以把这个 task.md 模板直接给它，让它照着拆工：
+
+ Project scaffolding (Vite + TS + Three.js)
+
+ Permissions flow (GPS + orientation + iOS gesture)
+
+ Outdoor activation heuristic + manual overrides
+
+ Game state machine implementation
+
+ GPS tracking (distance walked, time outside)
+
+ Node generator (spawn around player, typed nodes)
+
+ Reward spawner with tiers + hidden progression
+
+ Rendering: WebXR path
+
+ Rendering: iOS fallback camera overlay path
+
+ Reticle UI + target-in-reticle check
+
+ Capture hold mechanics + tier-based time
+
+ Feedback: vibration + audio + visual pulse
+
+ Companion orb follow behavior + pulse on capture
+
+ Evac logic (home radius + indoor heuristic/manual)
+
+ Evac animation + results screen
+
+ Performance pass (cap entities, throttle updates)
+
+ README + deploy instructions

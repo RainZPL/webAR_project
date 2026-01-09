@@ -41,7 +41,7 @@ export const gpsToLocalVector = (
   return [x, 0, z];
 };
 
-const getBearing = (start: Coordinates, dest: Coordinates): number => {
+export const getBearing = (start: Coordinates, dest: Coordinates): number => {
   const startLat = deg2rad(start.latitude);
   const startLng = deg2rad(start.longitude);
   const destLat = deg2rad(dest.latitude);

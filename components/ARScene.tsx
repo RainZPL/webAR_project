@@ -11,6 +11,8 @@ interface ARSceneProps {
   gameState: GameState;
   capturingId: string | null;
   cameraRotation: { alpha: number; beta: number; gamma: number } | null;
+  pulseKey: number;
+  evacStartTime: number | null;
 }
 
 // Helper to manually update camera if DeviceOrientationControls is flaky or we want manual override
@@ -26,39 +28,80 @@ const CameraRig = ({ cameraRotation }: { cameraRotation: any }) => {
   return <DeviceOrientationControls />; 
 };
 
-const CompanionGroup = ({ companions }: { companions: Companion[] }) => {
+const CompanionOrb = ({
+  offset,
+  gameState,
+  pulseKey,
+  tier,
+  evacStartTime
+}: {
+  offset: [number, number, number];
+  gameState: GameState;
+  pulseKey: number;
+  tier: Companion['tier'];
+  evacStartTime: number | null;
+}) => {
+  const orbRef = useRef<Group>(null);
+  const targetRef = useRef(new Vector3(offset[0], offset[1], offset[2]));
+  const evacTargetRef = useRef(new Vector3(0, 0.2, -0.6));
+
+  useEffect(() => {
+    targetRef.current.set(offset[0], offset[1], offset[2]);
+  }, [offset]);
+
+  useFrame(() => {
+    if (!orbRef.current) return;
+    const target = gameState === GameState.EVAC_ANIM ? evacTargetRef.current : targetRef.current;
+    const lerpFactor = gameState === GameState.EVAC_ANIM ? 0.12 : 0.04;
+    orbRef.current.position.lerp(target, lerpFactor);
+  });
+
+  return (
+    <group ref={orbRef}>
+      <Orb
+        position={[0, 0, 0]}
+        isCompanion={true}
+        pulseKey={pulseKey}
+        tier={tier}
+        evacActive={gameState === GameState.EVAC_ANIM}
+        evacStartTime={evacStartTime}
+      />
+    </group>
+  );
+};
+
+const CompanionGroup = ({
+  companions,
+  gameState,
+  pulseKey,
+  evacStartTime
+}: {
+  companions: Companion[];
+  gameState: GameState;
+  pulseKey: number;
+  evacStartTime: number | null;
+}) => {
   const groupRef = useRef<Group>(null);
   const { camera } = useThree();
   
   useFrame(() => {
-    if (groupRef.current) {
-      // Lerp group to camera position
-      const targetPos = camera.position.clone();
-      // Keep them slightly in front/around
-      groupRef.current.position.lerp(targetPos, 0.05);
-      
-      // Rotate the group to match camera Y rotation so they stay relative to view?
-      // Or just let them trail. Let's make them trail.
-    }
+    if (!groupRef.current) return;
+    groupRef.current.position.lerp(camera.position, 0.08);
+    groupRef.current.quaternion.slerp(camera.quaternion, 0.1);
   });
 
   return (
     <group ref={groupRef}>
-      {companions.map((c, i) => {
-        // Calculate a formation offset
-        const angle = (i / (companions.length || 1)) * Math.PI * 2;
-        const radius = 1.2;
-        const x = Math.sin(angle) * radius;
-        const z = Math.cos(angle) * radius;
-        
-        return (
-          <Orb 
-            key={c.id} 
-            position={[x, 0, z]} 
-            isCompanion={true} 
-          />
-        );
-      })}
+      {companions.map((c) => (
+        <CompanionOrb
+          key={c.id}
+          offset={c.offset}
+          gameState={gameState}
+          pulseKey={pulseKey}
+          tier={c.tier}
+          evacStartTime={evacStartTime}
+        />
+      ))}
     </group>
   );
 };
@@ -68,7 +111,9 @@ export const ARScene: React.FC<ARSceneProps> = ({
   companions, 
   gameState, 
   capturingId,
-  cameraRotation
+  cameraRotation,
+  pulseKey,
+  evacStartTime
 }) => {
 
   return (
@@ -90,12 +135,19 @@ export const ARScene: React.FC<ARSceneProps> = ({
             key={node.id} 
             position={node.position} 
             isCapturing={capturingId === node.id}
+            tier={node.tier}
+            nodeType={node.type}
           />
         );
       })}
 
       {/* Captured Companions */}
-      <CompanionGroup companions={companions} />
+      <CompanionGroup
+        companions={companions}
+        gameState={gameState}
+        pulseKey={pulseKey}
+        evacStartTime={evacStartTime}
+      />
       
       {/* Evac Visuals could go here */}
       {gameState === GameState.EVAC_ANIM && (

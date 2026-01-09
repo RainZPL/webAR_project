@@ -1,5 +1,5 @@
-import React from 'react';
-import { GameState, GameStats, RewardTier, GameNode } from '../types';
+import React, { useEffect, useState } from 'react';
+import { GameState, GameStats, GameNode, RewardRecord } from '../types';
 import { Radar, Home, Navigation, Focus, Hexagon, Zap, Bug, ArrowUp, RotateCcw, RotateCw } from 'lucide-react';
 
 interface GameUIProps {
@@ -12,9 +12,19 @@ interface GameUIProps {
   onCaptureStart: () => void;
   onCaptureEnd: () => void;
   onEvacuate: () => void;
+  onContinueExploring: () => void;
   onReset: () => void;
   distanceToHome: number;
   companionsCount: number;
+  gpsAccuracy: number | null;
+  isOutdoor: boolean;
+  isIndoor: boolean;
+  manualOutdoor: boolean;
+  manualHome: boolean;
+  onToggleOutdoorOverride: () => void;
+  onToggleHomeOverride: () => void;
+  rewardLog: RewardRecord[];
+  reticlePulseKey: number;
   
   // Debug
   isDebugMode: boolean;
@@ -34,15 +44,33 @@ export const GameUI: React.FC<GameUIProps> = ({
   onCaptureStart,
   onCaptureEnd,
   onEvacuate,
+  onContinueExploring,
   onReset,
   distanceToHome,
   companionsCount,
+  gpsAccuracy,
+  isOutdoor,
+  isIndoor,
+  manualOutdoor,
+  manualHome,
+  onToggleOutdoorOverride,
+  onToggleHomeOverride,
+  rewardLog,
+  reticlePulseKey,
   isDebugMode,
   onToggleDebug,
   onSimulateMove,
   onSimulateTurn,
   currentHeading
 }) => {
+  const [reticlePulse, setReticlePulse] = useState(false);
+
+  useEffect(() => {
+    if (!reticlePulseKey) return;
+    setReticlePulse(true);
+    const timer = window.setTimeout(() => setReticlePulse(false), 300);
+    return () => window.clearTimeout(timer);
+  }, [reticlePulseKey]);
   // 1. IDLE / START SCREEN
   if (gameState === GameState.IDLE) {
     return (
@@ -83,6 +111,10 @@ export const GameUI: React.FC<GameUIProps> = ({
             <span className="font-mono text-orange-300">{((Date.now() - stats.startTime) / 1000 / 60).toFixed(1)} min</span>
           </div>
           <div className="flex justify-between mb-4">
+            <span className="text-slate-400">Outdoor Time</span>
+            <span className="font-mono text-orange-300">{(stats.outdoorTimeMs / 1000 / 60).toFixed(1)} min</span>
+          </div>
+          <div className="flex justify-between mb-4">
             <span className="text-slate-400">Distance</span>
             <span className="font-mono text-orange-300">{stats.distanceWalked.toFixed(0)} m</span>
           </div>
@@ -90,6 +122,20 @@ export const GameUI: React.FC<GameUIProps> = ({
             <span className="text-slate-200">Companions Saved</span>
             <span className="font-bold text-2xl text-orange-400">{stats.rewardsCollected}</span>
           </div>
+
+          {rewardLog.length > 0 && (
+            <div className="mt-4 border-t border-slate-700 pt-3">
+              <div className="text-[10px] text-slate-400 uppercase tracking-widest">Recovered</div>
+              <div className="mt-2 max-h-24 overflow-y-auto space-y-1 text-xs text-slate-300">
+                {rewardLog.map((reward, index) => (
+                  <div key={`${reward.id}_${index}`} className="flex justify-between">
+                    <span>{reward.type}</span>
+                    <span className="text-orange-300">{reward.tier}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <button
           onClick={onReset}
@@ -112,11 +158,42 @@ export const GameUI: React.FC<GameUIProps> = ({
             <Navigation size={16} className="text-orange-400 animate-pulse" />
             <span className="font-mono text-sm">{message}</span>
           </div>
+          <div className="flex items-center space-x-2 text-[10px] text-slate-400 mt-1">
+            <span>GPS {gpsAccuracy !== null ? `${Math.round(gpsAccuracy)}m` : '--'}</span>
+            <span className={isOutdoor ? 'text-emerald-400' : 'text-amber-400'}>
+              {isOutdoor ? 'OUTDOOR' : 'WEAK'}
+            </span>
+            {isIndoor && <span className="text-emerald-300">INDOOR</span>}
+            {(manualOutdoor || manualHome) && <span className="text-cyan-300">MANUAL</span>}
+          </div>
         </div>
         
         <div className="flex flex-col items-end space-y-2">
           <div className="bg-slate-900/60 backdrop-blur px-3 py-1 rounded-full border border-orange-500/30">
              <span className="text-orange-400 font-bold">{companionsCount}</span> <span className="text-xs text-slate-400">ORBS</span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={onToggleOutdoorOverride}
+              className={`px-2 py-1 text-[10px] rounded border ${
+                manualOutdoor
+                  ? 'bg-emerald-600/80 border-emerald-400 text-white'
+                  : 'bg-slate-900/60 border-slate-700 text-slate-400'
+              }`}
+            >
+              OUTSIDE
+            </button>
+            <button
+              onClick={onToggleHomeOverride}
+              className={`px-2 py-1 text-[10px] rounded border ${
+                manualHome
+                  ? 'bg-cyan-600/80 border-cyan-400 text-white'
+                  : 'bg-slate-900/60 border-slate-700 text-slate-400'
+              }`}
+            >
+              I'M HOME
+            </button>
           </div>
           
           <button 
@@ -151,6 +228,9 @@ export const GameUI: React.FC<GameUIProps> = ({
           ${gameState === GameState.CAPTURE_READY ? 'border-orange-400 bg-orange-400/10 scale-125' : 'border-slate-500/50'}
           ${gameState === GameState.CAPTURING ? 'border-orange-500 scale-90' : ''}
         `}>
+          {reticlePulse && (
+            <div className="absolute inset-0 rounded-full border-2 border-orange-300 animate-ping"></div>
+          )}
           <Focus size={24} className={gameState === GameState.CAPTURE_READY ? 'text-orange-400' : 'text-slate-500'} />
         </div>
 
@@ -183,14 +263,20 @@ export const GameUI: React.FC<GameUIProps> = ({
         )}
 
         {gameState === GameState.EVAC_READY ? (
-          <div className="animate-bounce">
+          <div className="animate-bounce flex flex-col items-center">
             <button
-               onClick={onEvacuate}
-               className="px-8 py-4 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/20"
+              onClick={onEvacuate}
+              className="px-8 py-4 bg-emerald-600 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/20"
             >
               CONFIRM EVACUATION
             </button>
             <p className="text-center text-xs text-emerald-300 mt-2 bg-black/50 p-1 rounded">You are safely home</p>
+            <button
+              onClick={onContinueExploring}
+              className="mt-3 text-[10px] text-slate-300 uppercase tracking-widest"
+            >
+              Continue Exploring
+            </button>
           </div>
         ) : nearbyNode && (gameState === GameState.CAPTURE_READY || gameState === GameState.CAPTURING) ? (
           <div className="flex flex-col items-center space-y-2">

@@ -1,20 +1,33 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# North Star AR (WebAR Prototype)
 
-# Run and deploy your AI Studio app
+Mobile-first WebAR exploration prototype built with Vite + Three.js.
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1TdqPZIAYpn_t1gJakGlpgTX78RAidGVK
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+## Local Setup
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Run the dev server:
    `npm run dev`
+3. Open:
+   `http://localhost:3000`
+
+## Mobile Testing Notes
+
+- Camera and motion sensors require HTTPS (or `http://localhost`).
+- For real device testing, deploy to Vercel/Netlify or use a local HTTPS tunnel.
+- iOS Safari requires a user gesture to grant DeviceOrientation access.
+
+## Permissions
+
+- Camera: used for the fallback AR camera background.
+- Location (GPS): used for node spawning and distance tracking.
+- Motion/Orientation: used for heading/reticle alignment.
+- Manual overrides: use the `OUTSIDE` / `I'M HOME` buttons if sensors are blocked.
+
+## Build & Deploy
+
+1. Build:
+   `npm run build`
+2. Preview:
+   `npm run preview`
+3. Deploy the `dist/` folder to Vercel or Netlify.

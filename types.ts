@@ -33,7 +33,7 @@ export interface GameNode {
   type: NodeType;
   tier: RewardTier;
   geoPosition: Coordinates;
-  position: [number, number, number]; // Local Vector3 relative to start
+  position: [number, number, number]; // Local Vector3 relative to player
   captured: boolean;
   discovered: boolean;
 }
@@ -48,6 +48,13 @@ export interface GameStats {
   startTime: number;
   distanceWalked: number;
   rewardsCollected: number;
+  outdoorTimeMs: number;
+}
+
+export interface RewardRecord {
+  id: string;
+  type: NodeType;
+  tier: RewardTier;
 }
 
 // Global JSX augmentation for React Three Fiber
