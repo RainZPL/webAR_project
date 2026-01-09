@@ -65,6 +65,7 @@ declare global {
       group: any;
       mesh: any;
       sphereGeometry: any;
+      circleGeometry: any;
       meshStandardMaterial: any;
       meshBasicMaterial: any;
       pointLight: any;

@@ -7,6 +7,15 @@ export const DISCOVER_RADIUS = 18; // Visible in AR
 export const CAPTURE_RADIUS = 10; // Capturable distance
 export const HOME_RADIUS = 20; // Radius to trigger Evac
 
+// Fake AR mode (camera-only, GPS simulated)
+export const USE_FAKE_AR = true;
+export const FAKE_SPAWN_RADIUS_MIN = 8;
+export const FAKE_SPAWN_RADIUS_MAX = 24;
+export const FAKE_SPAWN_STEP_METERS = 8;
+export const FAKE_MOVE_SPEED_ACTIVE = 1.1; // m/s while phone is moving
+export const FAKE_MOVE_SPEED_IDLE = 0.3; // m/s for gentle drift
+export const FAKE_MOVE_TICK_MS = 500;
+
 // Timing
 export const CAPTURE_TIME_BASIC_MS = 1500;
 export const CAPTURE_TIME_ADVANCED_MS = 2200;

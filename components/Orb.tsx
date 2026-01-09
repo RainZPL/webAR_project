@@ -39,6 +39,7 @@ export const Orb: React.FC<OrbProps> = ({
   evacStartTime
 }) => {
   const meshRef = useRef<Mesh>(null);
+  const haloRef = useRef<Mesh>(null);
   const lightRef = useRef<any>(null);
   const pulseStartRef = useRef<number | null>(null);
   const tierColors = getTierColors(tier);
@@ -53,13 +54,22 @@ export const Orb: React.FC<OrbProps> = ({
     if (meshRef.current) {
       // Gentle floating animation
       const t = state.clock.getElapsedTime();
-      const floatY = Math.sin(t * 2) * 0.1;
-      const baseHeight = isCompanion ? 1.4 : 0.4;
+      const floatAmp = isCompanion ? 0.1 : 0.04;
+      const floatY = Math.sin(t * 2) * floatAmp;
+      const baseHeight = isCompanion ? 1.4 : 0.18;
+      const breath = (Math.sin(t * 1.6) + 1) / 2;
       
       // If it's a companion, it follows the camera smoothly (logic handled in parent usually, 
       // but here we just do local animations)
       
-      meshRef.current.position.y = position[1] + floatY + baseHeight;
+      const orbY = position[1] + floatY + baseHeight;
+      meshRef.current.position.y = orbY;
+      if (haloRef.current) {
+        haloRef.current.position.y = orbY;
+      }
+      if (lightRef.current) {
+        lightRef.current.position.y = orbY;
+      }
       
       // Pulse effect
       const tierBoost = tier === RewardTier.CORE ? 0.12 : tier === RewardTier.ADVANCED ? 0.06 : 0;
@@ -79,7 +89,7 @@ export const Orb: React.FC<OrbProps> = ({
         }
       }
       
-      const currentScale = scaleBase + pulse + (isCapturing ? 0.1 : 0) + pulseBoost;
+      const currentScale = scaleBase + pulse + (isCapturing ? 0.1 : 0) + pulseBoost + breath * 0.03;
       meshRef.current.scale.set(currentScale, currentScale, currentScale);
 
       const material = meshRef.current.material as any;
@@ -90,27 +100,33 @@ export const Orb: React.FC<OrbProps> = ({
       }
 
       if (material && typeof material.emissiveIntensity === 'number') {
-        const baseEmissive = isCapturing ? 3 : 1.5;
-        material.emissiveIntensity = baseEmissive + pulseBoost * 8 + (1 - evacFade) * 1.2;
+        const baseEmissive = isCapturing ? 3 : 1.4;
+        material.emissiveIntensity = baseEmissive + pulseBoost * 8 + breath * 0.6 + (1 - evacFade) * 1.2;
         material.opacity = 0.9 * evacFade;
       }
 
       if (lightRef.current) {
         const typeLightBoost = nodeType === NodeType.JUNCTION ? 0.4 : nodeType === NodeType.EDGE ? -0.2 : 0;
-        lightRef.current.intensity = (2 + pulseBoost * 6 + (isCapturing ? 1.5 : 0) + typeLightBoost) * evacFade;
+        lightRef.current.intensity = (2 + pulseBoost * 6 + breath * 0.8 + (isCapturing ? 1.5 : 0) + typeLightBoost) * evacFade;
       }
     }
   });
 
   return (
     <group position={[position[0], 0, position[2]]}>
+      {!isCompanion && (
+        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.35, 24]} />
+          <meshBasicMaterial color="#000000" transparent opacity={0.28} depthWrite={false} />
+        </mesh>
+      )}
       {/* Core Mesh */}
       <mesh ref={meshRef}>
         <sphereGeometry args={[1, 32, 32]} />
         <meshStandardMaterial
           color={tierColors.base}
           emissive={isCapturing ? '#ffffff' : tierColors.glow}
-          emissiveIntensity={isCapturing ? 3 : 1.5}
+          emissiveIntensity={isCapturing ? 3 : 1.4}
           roughness={0.1}
           metalness={0.1}
           transparent
@@ -119,7 +135,7 @@ export const Orb: React.FC<OrbProps> = ({
       </mesh>
       
       {/* Outer Glow Halo (Fake Volumetric) */}
-      <mesh position={[0, 1.5, 0]} scale={[1.2, 1.2, 1.2]}>
+      <mesh ref={haloRef} position={[0, 0, 0]} scale={[1.2, 1.2, 1.2]}>
          <sphereGeometry args={[0.5, 16, 16]} />
          <meshBasicMaterial 
             color={tierColors.glow} 
@@ -135,7 +151,7 @@ export const Orb: React.FC<OrbProps> = ({
         intensity={2} 
         distance={5} 
         decay={2} 
-        position={[0, 1.5, 0]} 
+        position={[0, 0, 0]} 
       />
     </group>
   );

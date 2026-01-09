@@ -6,7 +6,9 @@ import {
   SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX, DISCOVER_RADIUS, CAPTURE_RADIUS, 
   HOME_RADIUS, CAPTURE_TIME_BASIC_MS, CAPTURE_TIME_ADVANCED_MS, CAPTURE_TIME_CORE_MS,
   EVAC_DURATION_MS, RETICLE_ANGLE_DEG, OUTDOOR_ACCURACY_MAX, INDOOR_ACCURACY_MIN, INDOOR_HOLD_MS,
-  COMPANION_DISTANCE_MIN, COMPANION_DISTANCE_MAX
+  COMPANION_DISTANCE_MIN, COMPANION_DISTANCE_MAX,
+  USE_FAKE_AR, FAKE_SPAWN_RADIUS_MIN, FAKE_SPAWN_RADIUS_MAX, FAKE_SPAWN_STEP_METERS,
+  FAKE_MOVE_SPEED_ACTIVE, FAKE_MOVE_SPEED_IDLE, FAKE_MOVE_TICK_MS
 } from './constants';
 import { getDistanceFromLatLonInMeters, gpsToLocalVector, generateRandomNode, movePoint, getBearing } from './utils/geo';
 
@@ -62,6 +64,12 @@ const App: React.FC = () => {
   const lastOutdoorTickRef = useRef<number | null>(null);
   const dismissEvacUntilRef = useRef<number>(0);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const fakeLoopRef = useRef<number | null>(null);
+  const lastFakeTickRef = useRef<number | null>(null);
+  const lastMotionRef = useRef<number>(Date.now());
+  const lastOrientationRef = useRef<{ alpha: number; beta: number; gamma: number } | null>(null);
+  const lastSpawnPosRef = useRef<Coordinates | null>(null);
+  const handleLocationUpdateRef = useRef<((pos: Coordinates, heading: number | null, accuracy?: number | null, speed?: number | null) => void) | null>(null);
   
   // Sync refs
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -167,6 +175,41 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const stopFakeMovement = useCallback(() => {
+    if (fakeLoopRef.current !== null) {
+      clearInterval(fakeLoopRef.current);
+      fakeLoopRef.current = null;
+    }
+    lastFakeTickRef.current = null;
+  }, []);
+
+  const startFakeMovement = useCallback(() => {
+    stopFakeMovement();
+    lastFakeTickRef.current = Date.now();
+    fakeLoopRef.current = window.setInterval(() => {
+      const now = Date.now();
+      const lastTick = lastFakeTickRef.current ?? now;
+      const dt = Math.max(0, now - lastTick) / 1000;
+      lastFakeTickRef.current = now;
+
+      const lastMove = lastMotionRef.current || now;
+      const active = now - lastMove < 1500;
+      const speed = active ? FAKE_MOVE_SPEED_ACTIVE : FAKE_MOVE_SPEED_IDLE;
+
+      const current = currentPosRef.current;
+      if (!current) return;
+
+      const distance = speed * dt;
+      if (distance <= 0.01) return;
+
+      const headingDeg = headingRef.current || 0;
+      const nextPos = movePoint(current, distance, headingDeg);
+      if (handleLocationUpdateRef.current) {
+        handleLocationUpdateRef.current(nextPos, headingDeg, 12 + Math.random() * 6, speed);
+      }
+    }, FAKE_MOVE_TICK_MS);
+  }, [stopFakeMovement]);
+
   const handleStart = async () => {
     try {
       ensureAudioContext();
@@ -220,7 +263,30 @@ const App: React.FC = () => {
         }
       }
 
-      // 3. Start Geolocation Watch
+      // 3. Start Orientation Watch
+      window.addEventListener('deviceorientation', handleOrientation);
+
+      if (USE_FAKE_AR) {
+        const fakeStart = { latitude: 0, longitude: 0 };
+        startPosRef.current = fakeStart;
+        currentPosRef.current = fakeStart;
+        lastPosRef.current = fakeStart;
+        lastSpawnPosRef.current = fakeStart;
+        setStartPos(fakeStart);
+        setCurrentPos(fakeStart);
+        setGpsAccuracy(12);
+        setGpsSpeed(0.5);
+        const newStats = { startTime: Date.now(), distanceWalked: 0, rewardsCollected: 0, outdoorTimeMs: 0 };
+        statsRef.current = newStats;
+        setStats(newStats);
+        setGameState(GameState.OUTDOOR_SEARCH);
+        setMessage("Scanning Sector...");
+        spawnNodes(fakeStart, headingRef.current || 0);
+        startFakeMovement();
+        return;
+      }
+
+      // 4. Start Geolocation Watch
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
@@ -230,6 +296,7 @@ const App: React.FC = () => {
             setStartPos(coords);
             setCurrentPos(coords);
             lastPosRef.current = coords;
+            lastSpawnPosRef.current = coords;
             
             const newStats = { startTime: Date.now(), distanceWalked: 0, rewardsCollected: 0, outdoorTimeMs: 0 };
             statsRef.current = newStats;
@@ -248,6 +315,8 @@ const App: React.FC = () => {
             currentPosRef.current = fakeStart;
             setStartPos(fakeStart);
             setCurrentPos(fakeStart);
+            lastPosRef.current = fakeStart;
+            lastSpawnPosRef.current = fakeStart;
             const newStats = { startTime: Date.now(), distanceWalked: 0, rewardsCollected: 0, outdoorTimeMs: 0 };
             statsRef.current = newStats;
             setStats(newStats);
@@ -280,9 +349,6 @@ const App: React.FC = () => {
         alert("Geolocation not supported");
       }
 
-      // 4. Start Orientation Watch
-      window.addEventListener('deviceorientation', handleOrientation);
-
     } catch (e) {
       console.error(e);
       alert('Initialization failed');
@@ -296,6 +362,20 @@ const App: React.FC = () => {
     // but the Camera background orientation is what it is.
     
     if (e.alpha !== null && e.beta !== null && e.gamma !== null) {
+      const last = lastOrientationRef.current;
+      if (last) {
+        const delta =
+          Math.abs(e.alpha - last.alpha) +
+          Math.abs(e.beta - last.beta) +
+          Math.abs(e.gamma - last.gamma);
+        if (delta > 6) {
+          lastMotionRef.current = Date.now();
+        }
+      } else {
+        lastMotionRef.current = Date.now();
+      }
+      lastOrientationRef.current = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+
       setCameraRot({ alpha: e.alpha, beta: e.beta, gamma: e.gamma });
       
       if (!isDebugModeRef.current) {
@@ -315,9 +395,11 @@ const App: React.FC = () => {
     const newNodes: GameNode[] = [];
     // Spawn 3-5 nodes
     const count = 3 + Math.floor(Math.random() * 4);
+    const minDist = USE_FAKE_AR ? FAKE_SPAWN_RADIUS_MIN : SPAWN_RADIUS_MIN;
+    const maxDist = USE_FAKE_AR ? FAKE_SPAWN_RADIUS_MAX : SPAWN_RADIUS_MAX;
     
     for (let i = 0; i < count; i++) {
-      const geoPos = generateRandomNode(center, currentHeading, SPAWN_RADIUS_MIN, SPAWN_RADIUS_MAX);
+      const geoPos = generateRandomNode(center, currentHeading, minDist, maxDist);
       const localPos = gpsToLocalVector(center, geoPos);
       const typeRoll = Math.random();
       const nodeType =
@@ -328,7 +410,7 @@ const App: React.FC = () => {
         type: nodeType,
         tier: rollRewardTier(),
         geoPosition: geoPos,
-        position: [localPos[0], Math.random() * 0.2, localPos[2]],
+        position: [localPos[0], 0, localPos[2]],
         captured: false,
         discovered: false
       });
@@ -353,8 +435,10 @@ const App: React.FC = () => {
       setHeading(geoHeading as number);
     }
 
-    const accuracyValue = typeof accuracy === 'number' ? accuracy : null;
-    const speedValue = typeof speed === 'number' ? speed : null;
+    const accuracyRaw = typeof accuracy === 'number' ? accuracy : null;
+    const speedRaw = typeof speed === 'number' ? speed : null;
+    const accuracyValue = USE_FAKE_AR && accuracyRaw === null ? 12 : accuracyRaw;
+    const speedValue = USE_FAKE_AR && speedRaw === null ? 0.5 : speedRaw;
     setGpsAccuracy(accuracyValue);
     setGpsSpeed(speedValue);
 
@@ -454,10 +538,26 @@ const App: React.FC = () => {
 
     const activeNodes = nodesRef.current.filter(n => !n.captured);
     const headingForSpawn = hasGeoHeading ? (geoHeading as number) : headingRef.current;
-    if (activeNodes.length < 2) {
+    const minActiveNodes = USE_FAKE_AR ? 4 : 2;
+
+    if (!lastSpawnPosRef.current) {
+      lastSpawnPosRef.current = newPos;
+    }
+
+    const distSinceSpawn = lastSpawnPosRef.current
+      ? getDistanceFromLatLonInMeters(lastSpawnPosRef.current, newPos)
+      : 0;
+    const spawnStep = USE_FAKE_AR ? FAKE_SPAWN_STEP_METERS : SPAWN_RADIUS_MIN;
+
+    if (activeNodes.length < minActiveNodes || distSinceSpawn >= spawnStep) {
       spawnNodes(newPos, headingForSpawn);
+      lastSpawnPosRef.current = newPos;
     }
   }, []);
+
+  useEffect(() => {
+    handleLocationUpdateRef.current = handleLocationUpdate;
+  }, [handleLocationUpdate]);
 
   // --- SIMULATION LOGIC ---
   const handleSimulateMove = (meters: number) => {
@@ -661,6 +761,9 @@ const App: React.FC = () => {
       captureTimerRef.current = null;
     }
     lastPosRef.current = null;
+    lastSpawnPosRef.current = null;
+    lastOrientationRef.current = null;
+    lastMotionRef.current = Date.now();
     indoorStartRef.current = null;
     lastOutdoorTickRef.current = null;
     headingAvailableRef.current = false;
@@ -668,6 +771,7 @@ const App: React.FC = () => {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
+    stopFakeMovement();
     stopCameraStream();
   };
 
