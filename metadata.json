@@ -1,0 +1,9 @@
+{
+  "name": "North Star AR",
+  "description": "A location-based WebAR exploration game. Find and collect light orbs in the real world.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
