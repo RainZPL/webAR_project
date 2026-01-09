@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { DeviceOrientationControls } from '@react-three/drei';
-import { Vector3, Group } from 'three';
+import { Vector3, Group, PCFSoftShadowMap } from 'three';
+import { XR, useXR } from '@react-three/xr';
 import { GameNode, Companion, GameState } from '../types';
 import { Orb } from './Orb';
 
@@ -13,19 +14,49 @@ interface ARSceneProps {
   cameraRotation: { alpha: number; beta: number; gamma: number } | null;
   pulseKey: number;
   evacStartTime: number | null;
+  xrStore: any;
+  onXRActiveChange: (active: boolean) => void;
+  onXRFrame: (x: number, z: number, heading: number) => void;
 }
 
 // Helper to manually update camera if DeviceOrientationControls is flaky or we want manual override
 const CameraRig = ({ cameraRotation }: { cameraRotation: any }) => {
-  const { camera } = useThree();
-  
+  const { isPresenting } = useXR();
   useFrame(() => {
-    // If using the official DeviceOrientationControls from drei, it handles this.
-    // However, sometimes we need to calibrate "North".
-    // For this prototype, we'll rely on Drei's controls but ideally we'd offset by compass heading.
+    // DeviceOrientationControls handles rotation in non-XR fallback mode.
   });
-  
+  if (isPresenting) return null;
   return <DeviceOrientationControls />; 
+};
+
+const XRStatus = ({
+  onXRActiveChange,
+  onXRFrame
+}: {
+  onXRActiveChange: (active: boolean) => void;
+  onXRFrame: (x: number, z: number, heading: number) => void;
+}) => {
+  const { isPresenting } = useXR();
+  const { camera } = useThree();
+  const forwardRef = useRef(new Vector3());
+  const lastUpdateRef = useRef(0);
+
+  useEffect(() => {
+    onXRActiveChange(isPresenting);
+  }, [isPresenting, onXRActiveChange]);
+
+  useFrame(() => {
+    if (!isPresenting) return;
+    const now = performance.now();
+    if (now - lastUpdateRef.current < 120) return;
+    lastUpdateRef.current = now;
+    camera.getWorldDirection(forwardRef.current);
+    const heading =
+      ((Math.atan2(forwardRef.current.x, -forwardRef.current.z) * 180) / Math.PI + 360) % 360;
+    onXRFrame(camera.position.x, camera.position.z, heading);
+  });
+
+  return null;
 };
 
 const CompanionOrb = ({
@@ -113,46 +144,100 @@ export const ARScene: React.FC<ARSceneProps> = ({
   capturingId,
   cameraRotation,
   pulseKey,
-  evacStartTime
+  evacStartTime,
+  xrStore,
+  onXRActiveChange,
+  onXRFrame
 }) => {
 
   return (
     <Canvas 
-      camera={{ position: [0, 1.7, 0], fov: 75 }} 
+      camera={{ position: [0, 1.6, 0], fov: 75 }} 
       gl={{ alpha: true, antialias: true }}
+      shadows
+      onCreated={({ gl }) => {
+        gl.xr.enabled = true;
+        gl.shadowMap.enabled = true;
+        gl.shadowMap.type = PCFSoftShadowMap;
+        gl.setClearColor(0x000000, 0);
+        (gl as any).physicallyCorrectLights = true;
+      }}
       className="absolute top-0 left-0 w-full h-full z-10 pointer-events-none"
     >
-      <ambientLight intensity={0.2} />
-      <pointLight position={[10, 10, 10]} intensity={0.5} />
-      
-      <CameraRig cameraRotation={cameraRotation} />
+      <XR store={xrStore}>
+        <XRStatus onXRActiveChange={onXRActiveChange} onXRFrame={onXRFrame} />
+        <ambientLight intensity={0.35} />
+        <directionalLight
+          position={[6, 10, 4]}
+          intensity={0.8}
+          castShadow
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
+          shadow-camera-near={0.1}
+          shadow-camera-far={25}
+          shadow-camera-left={-10}
+          shadow-camera-right={10}
+          shadow-camera-top={10}
+          shadow-camera-bottom={-10}
+        />
+        
+        <CameraRig cameraRotation={cameraRotation} />
 
-      {/* Wild Nodes */}
-      {nodes.map((node) => {
-        if (!node.discovered || node.captured) return null;
-        return (
-          <Orb 
-            key={node.id} 
-            position={node.position} 
-            isCapturing={capturingId === node.id}
-            tier={node.tier}
-            nodeType={node.type}
-          />
-        );
-      })}
+        <GroundShadow />
 
-      {/* Captured Companions */}
-      <CompanionGroup
-        companions={companions}
-        gameState={gameState}
-        pulseKey={pulseKey}
-        evacStartTime={evacStartTime}
-      />
-      
-      {/* Evac Visuals could go here */}
-      {gameState === GameState.EVAC_ANIM && (
-        <fog attach="fog" args={['#000', 0, 15]} />
-      )}
+        {/* Wild Nodes */}
+        <NodeLayer
+          nodes={nodes}
+          capturingId={capturingId}
+        />
+
+        {/* Captured Companions */}
+        <CompanionGroup
+          companions={companions}
+          gameState={gameState}
+          pulseKey={pulseKey}
+          evacStartTime={evacStartTime}
+        />
+        
+        {/* Evac Visuals could go here */}
+        {gameState === GameState.EVAC_ANIM && (
+          <fog attach="fog" args={['#000', 0, 15]} />
+        )}
+      </XR>
     </Canvas>
   );
 };
+
+const GroundShadow = () => {
+  const { isPresenting } = useXR();
+  if (!isPresenting) return null;
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+      <planeGeometry args={[30, 30]} />
+      <shadowMaterial transparent opacity={0.25} />
+    </mesh>
+  );
+};
+
+const NodeLayer = ({
+  nodes,
+  capturingId
+}: {
+  nodes: GameNode[];
+  capturingId: string | null;
+}) => (
+  <>
+    {nodes.map((node) => {
+      if (!node.discovered || node.captured) return null;
+      return (
+        <Orb 
+          key={node.id} 
+          position={node.position} 
+          isCapturing={capturingId === node.id}
+          tier={node.tier}
+          nodeType={node.type}
+        />
+      );
+    })}
+  </>
+);

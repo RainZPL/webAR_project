@@ -121,7 +121,7 @@ export const Orb: React.FC<OrbProps> = ({
         </mesh>
       )}
       {/* Core Mesh */}
-      <mesh ref={meshRef}>
+      <mesh ref={meshRef} castShadow>
         <sphereGeometry args={[1, 32, 32]} />
         <meshStandardMaterial
           color={tierColors.base}

@@ -66,9 +66,12 @@ declare global {
       mesh: any;
       sphereGeometry: any;
       circleGeometry: any;
+      planeGeometry: any;
       meshStandardMaterial: any;
       meshBasicMaterial: any;
+      shadowMaterial: any;
       pointLight: any;
+      directionalLight: any;
       ambientLight: any;
       fog: any;
     }

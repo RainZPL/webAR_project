@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createXRStore } from '@react-three/xr';
 import { GameState, GameNode, Companion, GameStats, Coordinates, RewardTier, NodeType, RewardRecord } from './types';
 import { ARScene } from './components/ARScene';
 import { GameUI } from './components/GameUI';
@@ -11,6 +12,12 @@ import {
   FAKE_MOVE_SPEED_ACTIVE, FAKE_MOVE_SPEED_IDLE, FAKE_MOVE_TICK_MS
 } from './constants';
 import { getDistanceFromLatLonInMeters, gpsToLocalVector, generateRandomNode, movePoint, getBearing } from './utils/geo';
+
+const domOverlayRoot = typeof document !== 'undefined' ? { root: document.body } : undefined;
+const xrStore = createXRStore({
+  domOverlay: domOverlayRoot,
+  optionalFeatures: ['local-floor', 'hit-test', 'dom-overlay', 'light-estimation', 'depth-sensing']
+});
 
 const App: React.FC = () => {
   // --- STATE ---
@@ -33,6 +40,7 @@ const App: React.FC = () => {
   const [rewardLog, setRewardLog] = useState<RewardRecord[]>([]);
   const [reticlePulseKey, setReticlePulseKey] = useState(0);
   const [evacStartTime, setEvacStartTime] = useState<number | null>(null);
+  const [xrActive, setXrActive] = useState(false);
   
   // Debug State
   const [isDebugMode, setIsDebugMode] = useState(false);
@@ -70,6 +78,9 @@ const App: React.FC = () => {
   const lastOrientationRef = useRef<{ alpha: number; beta: number; gamma: number } | null>(null);
   const lastSpawnPosRef = useRef<Coordinates | null>(null);
   const handleLocationUpdateRef = useRef<((pos: Coordinates, heading: number | null, accuracy?: number | null, speed?: number | null) => void) | null>(null);
+  const lastXRPosRef = useRef<{ x: number; z: number; time: number } | null>(null);
+  const xrRequestedRef = useRef(false);
+  const xrActiveRef = useRef(false);
   
   // Sync refs
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -82,6 +93,7 @@ const App: React.FC = () => {
   useEffect(() => { companionsRef.current = companions; }, [companions]);
   useEffect(() => { manualOutdoorRef.current = manualOutdoor; }, [manualOutdoor]);
   useEffect(() => { manualHomeRef.current = manualHome; }, [manualHome]);
+  useEffect(() => { xrActiveRef.current = xrActive; }, [xrActive]);
 
   // --- INITIALIZATION ---
   const ensureAudioContext = useCallback((): AudioContext | null => {
@@ -175,6 +187,7 @@ const App: React.FC = () => {
     }
   }, []);
 
+
   const stopFakeMovement = useCallback(() => {
     if (fakeLoopRef.current !== null) {
       clearInterval(fakeLoopRef.current);
@@ -210,44 +223,76 @@ const App: React.FC = () => {
     }, FAKE_MOVE_TICK_MS);
   }, [stopFakeMovement]);
 
+  const tryStartXR = useCallback(async () => {
+    if (xrRequestedRef.current) return false;
+    if (!navigator.xr?.isSessionSupported) return false;
+    try {
+      const supported = await navigator.xr.isSessionSupported('immersive-ar');
+      if (!supported) return false;
+      xrRequestedRef.current = true;
+      await xrStore.enterAR();
+      return true;
+    } catch (err) {
+      console.warn('XR start failed', err);
+      xrRequestedRef.current = false;
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    const videoEl = document.getElementById('camera-feed') as HTMLVideoElement | null;
+    if (videoEl) {
+      videoEl.style.display = xrActive ? 'none' : '';
+    }
+    if (xrActive) {
+      stopCameraStream();
+      stopFakeMovement();
+    }
+  }, [xrActive, stopCameraStream, stopFakeMovement]);
+
   const handleStart = async () => {
     try {
       ensureAudioContext();
-      // 1. Request Camera
-      if (!window.isSecureContext) {
-        alert('Camera access requires HTTPS.');
-      } else if (!navigator.mediaDevices?.getUserMedia) {
-        alert('Camera not supported in this browser.');
+      const xrStarted = await tryStartXR();
+      if (xrStarted) {
+        setXrActive(true);
       } else {
-        try {
-          stopCameraStream();
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } },
-            audio: false
-          });
-          cameraStreamRef.current = stream;
-
-          const videoEl = document.getElementById('camera-feed') as HTMLVideoElement | null;
-          if (!videoEl) {
-            throw new Error('Camera video element not found');
-          }
-          videoEl.setAttribute('playsinline', 'true');
-          videoEl.setAttribute('webkit-playsinline', 'true');
-          videoEl.muted = true;
-          videoEl.autoplay = true;
-          videoEl.srcObject = stream;
-
-          if (videoEl.readyState < 2) {
-            await new Promise<void>((resolve) => {
-              videoEl.onloadedmetadata = () => resolve();
+        // 1. Request Camera (fallback overlay)
+        if (!window.isSecureContext) {
+          alert('Camera access requires HTTPS.');
+        } else if (!navigator.mediaDevices?.getUserMedia) {
+          alert('Camera not supported in this browser.');
+        } else {
+          try {
+            stopCameraStream();
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: 'environment' } },
+              audio: false
             });
+            cameraStreamRef.current = stream;
+
+            const videoEl = document.getElementById('camera-feed') as HTMLVideoElement | null;
+            if (!videoEl) {
+              throw new Error('Camera video element not found');
+            }
+            videoEl.setAttribute('playsinline', 'true');
+            videoEl.setAttribute('webkit-playsinline', 'true');
+            videoEl.muted = true;
+            videoEl.autoplay = true;
+            videoEl.srcObject = stream;
+
+            if (videoEl.readyState < 2) {
+              await new Promise<void>((resolve) => {
+                videoEl.onloadedmetadata = () => resolve();
+              });
+            }
+            await videoEl.play().catch((err) => {
+              console.warn('Video play failed', err);
+            });
+          } catch (err) {
+            console.warn('Camera access failed', err);
+            alert('Camera permission blocked or unavailable.');
           }
-          await videoEl.play().catch((err) => {
-            console.warn('Video play failed', err);
-          });
-        } catch (err) {
-          console.warn('Camera access failed', err);
-          alert('Camera permission blocked or unavailable.');
         }
       }
 
@@ -282,7 +327,9 @@ const App: React.FC = () => {
         setGameState(GameState.OUTDOOR_SEARCH);
         setMessage("Scanning Sector...");
         spawnNodes(fakeStart, headingRef.current || 0);
-        startFakeMovement();
+        if (!xrStarted) {
+          startFakeMovement();
+        }
         return;
       }
 
@@ -397,10 +444,11 @@ const App: React.FC = () => {
     const count = 3 + Math.floor(Math.random() * 4);
     const minDist = USE_FAKE_AR ? FAKE_SPAWN_RADIUS_MIN : SPAWN_RADIUS_MIN;
     const maxDist = USE_FAKE_AR ? FAKE_SPAWN_RADIUS_MAX : SPAWN_RADIUS_MAX;
+    const anchor = xrActiveRef.current ? (startPosRef.current ?? center) : center;
     
     for (let i = 0; i < count; i++) {
       const geoPos = generateRandomNode(center, currentHeading, minDist, maxDist);
-      const localPos = gpsToLocalVector(center, geoPos);
+      const localPos = gpsToLocalVector(anchor, geoPos);
       const typeRoll = Math.random();
       const nodeType =
         typeRoll < 0.33 ? NodeType.JUNCTION : typeRoll < 0.66 ? NodeType.OPEN_SPACE : NodeType.EDGE;
@@ -520,8 +568,9 @@ const App: React.FC = () => {
       setMessage("Exploration Active");
     }
 
+    const anchor = xrActiveRef.current ? start : newPos;
     setNodes(prevNodes => prevNodes.map(node => {
-      const localPos = gpsToLocalVector(newPos, node.geoPosition);
+      const localPos = gpsToLocalVector(anchor, node.geoPosition);
       const dist = getDistanceFromLatLonInMeters(newPos, node.geoPosition);
       const discovered = node.discovered || dist < DISCOVER_RADIUS;
 
@@ -557,6 +606,29 @@ const App: React.FC = () => {
 
   useEffect(() => {
     handleLocationUpdateRef.current = handleLocationUpdate;
+  }, [handleLocationUpdate]);
+
+  const handleXRFrame = useCallback((x: number, z: number, headingDeg: number) => {
+    const start = startPosRef.current;
+    if (!start) return;
+
+    const distance = Math.sqrt(x * x + z * z);
+    const bearing = (Math.atan2(x, -z) * 180) / Math.PI;
+    const heading = (bearing + 360) % 360;
+    const newPos = movePoint(start, distance, heading);
+
+    const now = Date.now();
+    const last = lastXRPosRef.current;
+    let speed = 0;
+    if (last) {
+      const dt = Math.max(0.001, (now - last.time) / 1000);
+      const dx = x - last.x;
+      const dz = z - last.z;
+      speed = Math.sqrt(dx * dx + dz * dz) / dt;
+    }
+    lastXRPosRef.current = { x, z, time: now };
+
+    handleLocationUpdate(newPos, headingDeg, 12, speed);
   }, [handleLocationUpdate]);
 
   // --- SIMULATION LOGIC ---
@@ -756,6 +828,11 @@ const App: React.FC = () => {
     setEvacStartTime(null);
     setHeading(0);
     setMessage('System Offline');
+    setXrActive(false);
+    const xrSession = (xrStore as any).getState?.().session;
+    if (xrSession?.end) {
+      xrSession.end();
+    }
     if (captureTimerRef.current) {
       clearInterval(captureTimerRef.current);
       captureTimerRef.current = null;
@@ -767,6 +844,8 @@ const App: React.FC = () => {
     indoorStartRef.current = null;
     lastOutdoorTickRef.current = null;
     headingAvailableRef.current = false;
+    lastXRPosRef.current = null;
+    xrRequestedRef.current = false;
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -797,6 +876,9 @@ const App: React.FC = () => {
           cameraRotation={cameraRot}
           pulseKey={reticlePulseKey}
           evacStartTime={evacStartTime}
+          xrStore={xrStore}
+          onXRActiveChange={setXrActive}
+          onXRFrame={handleXRFrame}
         />
       )}
 
