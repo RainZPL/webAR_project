@@ -34,6 +34,7 @@ const App: React.FC = () => {
   const nodesRef = useRef<GameNode[]>([]);
   const gameStateRef = useRef<GameState>(GameState.IDLE);
   const captureTimerRef = useRef<number | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const lastPosRef = useRef<Coordinates | null>(null);
   const isDebugModeRef = useRef(false);
   
@@ -43,18 +44,56 @@ const App: React.FC = () => {
   useEffect(() => { isDebugModeRef.current = isDebugMode; }, [isDebugMode]);
 
   // --- INITIALIZATION ---
+  const stopCameraStream = useCallback(() => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
+    }
+    const videoEl = document.getElementById('camera-feed') as HTMLVideoElement | null;
+    if (videoEl) {
+      videoEl.srcObject = null;
+    }
+  }, []);
+
   const handleStart = async () => {
     try {
       // 1. Request Camera
-      await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(stream => {
-          const videoEl = document.getElementById('camera-feed') as HTMLVideoElement;
-          if (videoEl) {
-            videoEl.srcObject = stream;
-            videoEl.play();
+      if (!window.isSecureContext) {
+        alert('Camera access requires HTTPS.');
+      } else if (!navigator.mediaDevices?.getUserMedia) {
+        alert('Camera not supported in this browser.');
+      } else {
+        try {
+          stopCameraStream();
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: false
+          });
+          cameraStreamRef.current = stream;
+
+          const videoEl = document.getElementById('camera-feed') as HTMLVideoElement | null;
+          if (!videoEl) {
+            throw new Error('Camera video element not found');
           }
-        })
-        .catch(err => console.error("Camera denied", err));
+          videoEl.setAttribute('playsinline', 'true');
+          videoEl.setAttribute('webkit-playsinline', 'true');
+          videoEl.muted = true;
+          videoEl.autoplay = true;
+          videoEl.srcObject = stream;
+
+          if (videoEl.readyState < 2) {
+            await new Promise<void>((resolve) => {
+              videoEl.onloadedmetadata = () => resolve();
+            });
+          }
+          await videoEl.play().catch((err) => {
+            console.warn('Video play failed', err);
+          });
+        } catch (err) {
+          console.warn('Camera access failed', err);
+          alert('Camera permission blocked or unavailable.');
+        }
+      }
 
       // 2. Request DeviceOrientation (iOS 13+)
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
@@ -322,6 +361,7 @@ const App: React.FC = () => {
     setStartPos(null);
     setCurrentPos(null);
     setIsDebugMode(false);
+    stopCameraStream();
   };
 
   // Find nearby node for UI
